@@ -1,0 +1,11 @@
+mapping_odom_bridge:
+  ros__parameters:
+    serial_port: "/dev/esp32_map"
+    baud_rate: 115200
+    wheel_separation: 0.30      # [METER] Ukur jarak antar pusat roda kiri-kanan robot mapping
+    wheel_radius: 0.042         # [METER] Ukur jari-jari roda robot mapping
+    ticks_per_rev: 360.0        # [PULSA] Total pulsa encoder per 1 putaran penuh roda
+    invert_left: false          # Ubah ke true jika maju tapi ENCL berkurang
+    invert_right: false         # Ubah ke true jika maju tapi ENCR berkurang
+    odom_frame: "odom"
+    base_frame: "base_footprint"
