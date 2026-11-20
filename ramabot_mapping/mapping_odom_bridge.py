@@ -1,153 +1,162 @@
 #!/usr/bin/env python3
 import math
-import re
 import time
 import serial
 import rclpy
 from rclpy.node import Node
+from geometry_msgs.msg import Twist, TransformStamped
 from nav_msgs.msg import Odometry
-from geometry_msgs.msg import TransformStamped
+from std_srvs.srv import Trigger
 from tf2_ros import TransformBroadcaster
+
+
+def yaw_to_quaternion(yaw: float):
+    half = yaw * 0.5
+    return (0.0, 0.0, math.sin(half), math.cos(half))
+
+
+def normalize_angle(angle: float) -> float:
+    return math.atan2(math.sin(angle), math.cos(angle))
 
 
 class MappingOdomBridge(Node):
     def __init__(self):
         super().__init__('mapping_odom_bridge')
-
-        self.declare_parameter('serial_port', '/dev/esp32_map')
+        self.declare_parameter('serial_port', '/dev/m5stack')
         self.declare_parameter('baud_rate', 115200)
-        self.declare_parameter('wheel_separation', 0.30)
-        self.declare_parameter('wheel_radius', 0.042)
-        self.declare_parameter('ticks_per_rev', 360.0)
-        self.declare_parameter('invert_left', False)
-        self.declare_parameter('invert_right', False)
         self.declare_parameter('odom_frame', 'odom')
         self.declare_parameter('base_frame', 'base_footprint')
+        self.declare_parameter('invert_yaw', True)
 
-        self.port = self.get_parameter('serial_port').value
-        self.baud = int(self.get_parameter('baud_rate').value)
-        self.L = float(self.get_parameter('wheel_separation').value)
-        self.r = float(self.get_parameter('wheel_radius').value)
-        self.ppr = float(self.get_parameter('ticks_per_rev').value)
-        self.inv_l = -1.0 if self.get_parameter('invert_left').value else 1.0
-        self.inv_r = -1.0 if self.get_parameter('invert_right').value else 1.0
-        self.odom_frame = self.get_parameter('odom_frame').value
-        self.base_frame = self.get_parameter('base_frame').value
+        port = self.get_parameter('serial_port').get_parameter_value().string_value
+        baud = self.get_parameter('baud_rate').get_parameter_value().integer_value
+        self.odom_frame = self.get_parameter('odom_frame').get_parameter_value().string_value
+        self.base_frame = self.get_parameter('base_frame').get_parameter_value().string_value
+        self.invert_yaw = self.get_parameter('invert_yaw').get_parameter_value().bool_value
 
-        self.meters_per_tick = (2.0 * math.pi * self.r) / self.ppr
+        self.ser = serial.Serial()
+        self.ser.port = port
+        self.ser.baudrate = baud
+        self.ser.timeout = 0.02
+        self.ser.dsrdtr = False
+        self.ser.rtscts = False
+        self.ser.dtr = False
+        self.ser.rts = False
+        self.ser.open()
+        self.ser.reset_input_buffer()
 
-        self.x = 0.0
-        self.y = 0.0
-        self.th = 0.0
-        self.prev_enc_l = None
-        self.prev_enc_r = None
-        self.last_time = self.get_clock().now()
+        self.last_log_time = time.time()
+        self.get_logger().info(
+            f'Terhubung ke M5Stack Core Grey di {port} @ {baud} bps (IMU-only mode, invert_yaw={self.invert_yaw})'
+        )
 
         self.odom_pub = self.create_publisher(Odometry, '/odom', 20)
         self.tf_broadcaster = TransformBroadcaster(self)
+        self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.cmd_vel_cb, 10)
+        self.reset_srv = self.create_service(Trigger, '/reset_odom', self.reset_odom_cb)
 
-        self.ser = None
-        self._open_serial()
+        self.timer = self.create_timer(0.01, self.read_serial_loop)
 
-        self.pattern = re.compile(r'ENCL:(-?\d+),ENCR:(-?\d+)')
-        self.timer = self.create_timer(0.02, self.read_serial)
-
-    def _open_serial(self):
-        while rclpy.ok():
-            try:
-                ser = serial.Serial()
-                ser.port = self.port
-                ser.baudrate = self.baud
-                ser.timeout = 0.05
-                ser.dtr = False
-                ser.rts = False
-                ser.open()
-                self.ser = ser
-                self.get_logger().info(f'Terhubung ke ESP32 mapping di {self.port} @ {self.baud} bps')
-                return
-            except serial.SerialException as e:
-                self.get_logger().warn(f'Menunggu port {self.port} ({e})... coba lagi 2 detik')
-                time.sleep(2.0)
-
-    def read_serial(self):
-        if self.ser is None or not self.ser.is_open:
-            self._open_serial()
-            return
-
+    def cmd_vel_cb(self, msg: Twist):
+        cmd_str = f"CMD:{msg.linear.x:.3f},{msg.angular.z:.3f}\n"
         try:
+            self.ser.write(cmd_str.encode('utf-8'))
+        except serial.SerialException as e:
+            self.get_logger().error(f'Gagal kirim CMD serial: {e}')
+
+    def reset_odom_cb(self, request, response):
+        try:
+            self.ser.write(b"RESET\n")
+            response.success = True
+            response.message = "Odometri & gyro heading M5Stack di-reset ke 0"
+        except serial.SerialException as e:
+            response.success = False
+            response.message = str(e)
+        return response
+
+    def read_serial_loop(self):
+        try:
+            latest_parts = None
             while self.ser.in_waiting > 0:
                 line = self.ser.readline().decode('utf-8', errors='ignore').strip()
-                match = self.pattern.search(line)
-                if not match:
-                    continue
+                if line.startswith('ODO:'):
+                    parts = line[4:].split(',')
+                    if len(parts) >= 5:
+                        latest_parts = parts
 
-                enc_l = int(match.group(1))
-                enc_r = int(match.group(2))
-                now = self.get_clock().now()
+            if latest_parts is None:
+                return
 
-                if self.prev_enc_l is None:
-                    self.prev_enc_l = enc_l
-                    self.prev_enc_r = enc_r
-                    self.last_time = now
-                    continue
+            x = float(latest_parts[0])
+            y = float(latest_parts[1])
+            theta = float(latest_parts[2])
+            vx = float(latest_parts[3])
+            vth = float(latest_parts[4])
 
-                dt = (now - self.last_time).nanoseconds / 1e9
-                if dt <= 0.0:
-                    continue
+            if self.invert_yaw:
+                theta = -theta
+                vth = -vth
 
-                d_l = (enc_l - self.prev_enc_l) * self.meters_per_tick * self.inv_l
-                d_r = (enc_r - self.prev_enc_r) * self.meters_per_tick * self.inv_r
+            theta = normalize_angle(theta)
 
-                self.prev_enc_l = enc_l
-                self.prev_enc_r = enc_r
-                self.last_time = now
+            if time.time() - self.last_log_time >= 1.5:
+                self.last_log_time = time.time()
+                self.get_logger().info(
+                    f'ODOM -> x={x:.3f}m, y={y:.3f}m, yaw={math.degrees(theta):.1f} deg'
+                )
 
-                d_center = 0.5 * (d_r + d_l)
-                d_theta = (d_r - d_l) / self.L
+            now = self.get_clock().now().to_msg()
+            qx, qy, qz, qw = yaw_to_quaternion(theta)
 
-                self.x += d_center * math.cos(self.th + 0.5 * d_theta)
-                self.y += d_center * math.sin(self.th + 0.5 * d_theta)
-                self.th = math.atan2(math.sin(self.th + d_theta), math.cos(self.th + d_theta))
+            # 1. Broadcast TF odom -> base_footprint
+            tf_msg = TransformStamped()
+            tf_msg.header.stamp = now
+            tf_msg.header.frame_id = self.odom_frame
+            tf_msg.child_frame_id = self.base_frame
+            tf_msg.transform.translation.x = x
+            tf_msg.transform.translation.y = y
+            tf_msg.transform.translation.z = 0.0
+            tf_msg.transform.rotation.x = qx
+            tf_msg.transform.rotation.y = qy
+            tf_msg.transform.rotation.z = qz
+            tf_msg.transform.rotation.w = qw
+            self.tf_broadcaster.sendTransform(tf_msg)
 
-                vx = d_center / dt
-                vth = d_theta / dt
+            # 2. Publish /odom (Kovarians x,y=0.25 untuk open-loop; yaw=0.002 untuk MPU6886)
+            odom = Odometry()
+            odom.header.stamp = now
+            odom.header.frame_id = self.odom_frame
+            odom.child_frame_id = self.base_frame
+            odom.pose.pose.position.x = x
+            odom.pose.pose.position.y = y
+            odom.pose.pose.orientation.x = qx
+            odom.pose.pose.orientation.y = qy
+            odom.pose.pose.orientation.z = qz
+            odom.pose.pose.orientation.w = qw
 
-                qz = math.sin(self.th * 0.5)
-                qw = math.cos(self.th * 0.5)
-                stamp = now.to_msg()
+            odom.pose.covariance = [
+                0.25, 0.0,  0.0,  0.0,  0.0,  0.0,
+                0.0,  0.25, 0.0,  0.0,  0.0,  0.0,
+                0.0,  0.0,  1e6,  0.0,  0.0,  0.0,
+                0.0,  0.0,  0.0,  1e6,  0.0,  0.0,
+                0.0,  0.0,  0.0,  0.0,  1e6,  0.0,
+                0.0,  0.0,  0.0,  0.0,  0.0,  0.002
+            ]
 
-                t = TransformStamped()
-                t.header.stamp = stamp
-                t.header.frame_id = self.odom_frame
-                t.child_frame_id = self.base_frame
-                t.transform.translation.x = self.x
-                t.transform.translation.y = self.y
-                t.transform.translation.z = 0.0
-                t.transform.rotation.z = qz
-                t.transform.rotation.w = qw
-                self.tf_broadcaster.sendTransform(t)
+            odom.twist.twist.linear.x = vx
+            odom.twist.twist.angular.z = vth
+            odom.twist.covariance = [
+                0.25, 0.0,  0.0,  0.0,  0.0,  0.0,
+                0.0,  0.25, 0.0,  0.0,  0.0,  0.0,
+                0.0,  0.0,  1e6,  0.0,  0.0,  0.0,
+                0.0,  0.0,  0.0,  1e6,  0.0,  0.0,
+                0.0,  0.0,  0.0,  0.0,  1e6,  0.0,
+                0.0,  0.0,  0.0,  0.0,  0.0,  0.002
+            ]
 
-                odom = Odometry()
-                odom.header.stamp = stamp
-                odom.header.frame_id = self.odom_frame
-                odom.child_frame_id = self.base_frame
-                odom.pose.pose.position.x = self.x
-                odom.pose.pose.position.y = self.y
-                odom.pose.pose.orientation.z = qz
-                odom.pose.pose.orientation.w = qw
-                odom.twist.twist.linear.x = vx
-                odom.twist.twist.angular.z = vth
-                self.odom_pub.publish(odom)
-
-        except serial.SerialException as e:
-            self.get_logger().error(f'Koneksi serial terputus: {e}. Menyambung ulang...')
-            try:
-                self.ser.close()
-            except Exception:
-                pass
-            self.ser = None
-            self.prev_enc_l = None
-            self.prev_enc_r = None
+            self.odom_pub.publish(odom)
+        except Exception as e:
+            self.get_logger().warn(f'Serial parse warning: {e}')
 
 
 def main(args=None):
@@ -158,10 +167,15 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        if node.ser and node.ser.is_open:
-            node.ser.close()
+        if node.ser.is_open:
+            try:
+                node.ser.write(b"CMD:0.000,0.000\n")
+                node.ser.close()
+            except Exception:
+                pass
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

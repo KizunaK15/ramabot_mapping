@@ -1,79 +1,99 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    pkg_dir = get_package_share_directory('ramabot_mapping')
-    bot_config = os.path.join(pkg_dir, 'config', 'mapping_bot.yaml')
-    slam_config = os.path.join(pkg_dir, 'config', 'slam_toolbox_mapping.yaml')
+    pkg_ramabot = get_package_share_directory('ramabot_mapping')
+    pkg_sllidar = get_package_share_directory('sllidar_ros2')
 
-    lidar_port = LaunchConfiguration('lidar_port', default='/dev/rplidar')
-    esp_port = LaunchConfiguration('esp_port', default='/dev/esp32_map')
-    lidar_x = LaunchConfiguration('lidar_x', default='0.10')
-    lidar_y = LaunchConfiguration('lidar_y', default='0.00')
-    lidar_z = LaunchConfiguration('lidar_z', default='0.15')
-    lidar_yaw = LaunchConfiguration('lidar_yaw', default='0.0')
+    bot_config = os.path.join(pkg_ramabot, 'config', 'mapping_bot.yaml')
+    slam_config = os.path.join(pkg_ramabot, 'config', 'slam_toolbox_mapping.yaml')
+
+    # Argumen kalibrasi cepat tanpa perlu edit kode:
+    # lidar_yaw: '0.0' jika kabel/motor RPLidar menghadap BELAKANG robot (sensor menghadap depan)
+    #            '3.14159' jika kabel/motor RPLidar menghadap DEPAN robot
+    lidar_yaw_arg = DeclareLaunchArgument(
+        'lidar_yaw',
+        default_value='0.0',
+        description='Yaw offset (rad) dari base_link ke laser_frame (0.0 atau 3.14159)'
+    )
+    invert_yaw_arg = DeclareLaunchArgument(
+        'invert_yaw',
+        default_value='true',
+        description='Balik tanda yaw odom dari M5Stack jika berlawanan arah putaran LiDAR'
+    )
+
+    # 1. Node Bridge Serial M5Stack Core Grey -> /odom & TF (odom -> base_footprint)
+    odom_bridge_node = Node(
+        package='ramabot_mapping',
+        executable='mapping_odom_bridge',
+        name='mapping_odom_bridge',
+        output='screen',
+        parameters=[
+            bot_config,
+            {'invert_yaw': LaunchConfiguration('invert_yaw')}
+        ]
+    )
+
+    # 2. Static TF: base_footprint -> base_link (tinggi pusat roda = 0.067 m)
+    tf_base_link = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='tf_base_footprint_to_base_link',
+        arguments=[
+            '--x', '0.0', '--y', '0.0', '--z', '0.067',
+            '--yaw', '0.0', '--pitch', '0.0', '--roll', '0.0',
+            '--frame-id', 'base_footprint', '--child-frame-id', 'base_link'
+        ]
+    )
+
+    # 3. Static TF: base_link -> laser_frame (diselaraskan dengan URDF Ramabot_V3)
+    tf_laser = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='tf_base_link_to_laser',
+        arguments=[
+            '--x', '0.05', '--y', '0.0', '--z', '0.12',
+            '--yaw', LaunchConfiguration('lidar_yaw'), '--pitch', '0.0', '--roll', '0.0',
+            '--frame-id', 'base_link', '--child-frame-id', 'laser_frame'
+        ]
+    )
+
+    # 4. Driver RPLidar A2M8 (/dev/rplidar @ 115200 bps)
+    sllidar_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(pkg_sllidar, 'launch', 'sllidar_a2m8_launch.py')
+        ),
+        launch_arguments={
+            'serial_port': '/dev/rplidar',
+            'serial_baudrate': '115200',
+            'frame_id': 'laser_frame',
+            'inverted': 'false',
+            'angle_compensate': 'true',
+            'scan_mode': 'Sensitivity'
+        }.items()
+    )
+
+    # 5. Online Async SLAM Toolbox
+    slam_toolbox_node = Node(
+        package='slam_toolbox',
+        executable='async_slam_toolbox_node',
+        name='slam_toolbox',
+        output='screen',
+        parameters=[slam_config]
+    )
 
     return LaunchDescription([
-        DeclareLaunchArgument('lidar_port', default_value='/dev/rplidar'),
-        DeclareLaunchArgument('esp_port', default_value='/dev/esp32_map'),
-        DeclareLaunchArgument('lidar_x', default_value='0.10'),
-        DeclareLaunchArgument('lidar_y', default_value='0.00'),
-        DeclareLaunchArgument('lidar_z', default_value='0.15'),
-        DeclareLaunchArgument('lidar_yaw', default_value='0.0'),
-
-        Node(
-            package='sllidar_ros2',
-            executable='sllidar_node',
-            name='sllidar_node',
-            parameters=[{
-                'channel_type': 'serial',
-                'serial_port': lidar_port,
-                'serial_baudrate': 115200,
-                'frame_id': 'laser_frame',
-                'inverted': False,
-                'angle_compensate': True,
-                'scan_mode': 'Standard',
-            }],
-            output='screen'
-        ),
-
-        Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='base_to_laser_tf',
-            arguments=[
-                '--x', lidar_x, '--y', lidar_y, '--z', lidar_z,
-                '--yaw', lidar_yaw, '--pitch', '0.0', '--roll', '0.0',
-                '--frame-id', 'base_footprint', '--child-frame-id', 'laser_frame'
-            ]
-        ),
-
-        Node(
-            package='ramabot_mapping',
-            executable='mapping_odom_bridge',
-            name='mapping_odom_bridge',
-            parameters=[bot_config, {'serial_port': esp_port}],
-            output='screen'
-        ),
-
-        Node(
-            package='slam_toolbox',
-            executable='async_slam_toolbox_node',
-            name='slam_toolbox',
-            parameters=[slam_config, {'use_sim_time': False}],
-            output='screen'
-        ),
-
-        Node(
-            package='foxglove_bridge',
-            executable='foxglove_bridge',
-            name='foxglove_bridge',
-            parameters=[{'port': 8765}],
-            output='screen'
-        ),
+        lidar_yaw_arg,
+        invert_yaw_arg,
+        odom_bridge_node,
+        tf_base_link,
+        tf_laser,
+        sllidar_launch,
+        slam_toolbox_node
     ])
