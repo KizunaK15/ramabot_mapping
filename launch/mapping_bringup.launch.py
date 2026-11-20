@@ -27,15 +27,17 @@ def generate_launch_description():
         DeclareLaunchArgument('lidar_yaw', default_value='0.0'),
 
         Node(
-            package='rplidar_ros',
-            executable='rplidar_node',
-            name='rplidar_node',
+            package='sllidar_ros2',
+            executable='sllidar_node',
+            name='sllidar_node',
             parameters=[{
+                'channel_type': 'serial',
                 'serial_port': lidar_port,
                 'serial_baudrate': 115200,
                 'frame_id': 'laser_frame',
                 'inverted': False,
                 'angle_compensate': True,
+                'scan_mode': 'Standard',
             }],
             output='screen'
         ),

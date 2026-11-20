@@ -2,7 +2,7 @@
 set -e
 
 MAP_NAME="${1:-hospital_map}"
-OUT_DIR="$HOME/ramabot_ws/src/ramabot_mapping/maps"
+OUT_DIR="$HOME/ros2_ws/src/ramabot_mapping/maps"
 mkdir -p "$OUT_DIR"
 
 echo "Menyimpan peta ke $OUT_DIR/$MAP_NAME (.yaml & .pgm)..."
