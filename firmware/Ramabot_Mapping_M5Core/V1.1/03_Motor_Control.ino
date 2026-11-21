@@ -90,7 +90,7 @@ void taskControlLoop(void *parameter) {
     headingDeg = normalizeAngleDeg(headingDeg + deltaHeadingDeg);
     portEXIT_CRITICAL(&stateMux);
 
-    // 2. Loop PID Heading Lock & Real Wheel Encoder Odometry (50Hz / 20ms)
+    // 2. Loop PID Heading Lock & Odometri Gerak Algoritma Robot Utama (50Hz / 20ms)
     if (nowMicros - lastPidMicros >= 20000) {
       float dtPid = (nowMicros - lastPidMicros) / 1000000.0f;
       lastPidMicros = nowMicros;
@@ -116,6 +116,25 @@ void taskControlLoop(void *parameter) {
       float rVx    = rosCmdVx;
       float rVth   = rosCmdVth;
       portEXIT_CRITICAL(&stateMux);
+
+      // Pembacaan delta pulsa kumulatif (Algoritma Robot Utama)
+      noInterrupts();
+      long curPulseL = pulseL;
+      long curPulseR = pulseR;
+      interrupts();
+
+      long dPulseL = curPulseL - prevPulseL;
+      long dPulseR = curPulseR - prevPulseR;
+      prevPulseL = curPulseL;
+      prevPulseR = curPulseR;
+
+      float dL = (float)dPulseL * DIST_PER_PULSE * linearScale;
+      float dR = (float)dPulseR * DIST_PER_PULSE * linearScale;
+      float dS = (dR + dL) * 0.5f;
+      float dThetaRad = deltaHeadingDeg * DEG_TO_RAD;
+
+      estVx  = dS / dtPid;
+      estVth = rateZ * DEG_TO_RAD;
 
       float maxPwmScale = joySnap.btn_boost ? 255.0f : (normalSpeedPct * 255.0f);
       float basePwmL = 0.0f;
@@ -231,30 +250,13 @@ void taskControlLoop(void *parameter) {
         driveMotors(0, 0);
       }
 
-      // 3. Estimasi Odometri 2D Berbasis Feedback Real Encoder
-      noInterrupts();
-      long dL = tick_count_left;
-      long dR = tick_count_right;
-      tick_count_left = 0;
-      tick_count_right = 0;
-      interrupts();
-
-      float distL = (2.0f * PI * WHEEL_RADIUS * (float)dL) / ENCODER_CPR;
-      float distR = (2.0f * PI * WHEEL_RADIUS * (float)dR) / ENCODER_CPR;
-
-      float dS = ((distR + distL) / 2.0f) * linearScale;
-      estVx = dS / dtPid;
-
-      estVth = rateZ * DEG_TO_RAD;
-      float dThetaRad = deltaHeadingDeg * DEG_TO_RAD;
-
+      // Pembaruan Pose Odometri (Algoritma Robot Utama)
       portENTER_CRITICAL(&stateMux);
       yawPidOut = localYawOut;
-      float currentThetaRad = normalizeAngleRad(headingDeg * DEG_TO_RAD);
-      float thetaMid = currentThetaRad - (dThetaRad * 0.5f);
+      float thetaMid = odoTheta + dThetaRad * 0.5f;
       odoX += dS * cosf(thetaMid);
       odoY += dS * sinf(thetaMid);
-      odoTheta = currentThetaRad;
+      odoTheta = normalizeAngleRad(odoTheta + dThetaRad);
       portEXIT_CRITICAL(&stateMux);
     }
 

@@ -88,8 +88,13 @@ void processRosSerial() {
     }
   }
 
+  noInterrupts();
+  long tL = pulseL;
+  long tR = pulseR;
+  interrupts();
+
   portENTER_CRITICAL(&stateMux);
   float x = odoX, y = odoY, th = odoTheta, vx = estVx, vth = estVth;
   portEXIT_CRITICAL(&stateMux);
-  Serial.printf("ODO:%.4f,%.4f,%.4f,%.4f,%.4f,0,0\n", x, y, th, vx, vth);
+  Serial.printf("ODO:%.4f,%.4f,%.4f,%.4f,%.4f,%ld,%ld\n", x, y, th, vx, vth, tL, tR);
 }

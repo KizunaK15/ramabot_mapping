@@ -38,28 +38,28 @@ const int CH_M1B = 5;
 const int CH_M2A = 6;
 const int CH_M2B = 7;
 
-// ================= DEFINISI PIN & RESOLUSI ENCODER RODA =================
-// Catatan Hardware: GPIO 35 & 36 adalah Input-Only (Wajib Resistor Pull-Up Eksternal ke 3.3V)
-// GPIO 25 terhubung ke internal Speaker DAC (Audio di-mute pada setup)
+// ================= DEFINISI PIN & RESOLUSI ENCODER RODA (ROBOT MAPPING) =================
+// Quadrature 2X Decoding (CHANGE): R = GPIO 36 & 25, L = GPIO 16 & 35
 const int ENCODER_L_A = 16;  // Channel A Kiri (Interrupt)
 const int ENCODER_L_B = 35;  // Channel B Kiri (Input-Only)
-const int ENCODER_R_A = 25;  // Channel A Kanan (Interrupt)
-const int ENCODER_R_B = 36;  // Channel B Kanan (Input-Only)
+const int ENCODER_R_A = 36;  // Channel A Kanan (Interrupt Input-Only)
+const int ENCODER_R_B = 25;  // Channel B Kanan
 
-const float ENCODER_CPR     = 816.0f; // 1X Decoding (16 PPR * 51 Gear Ratio)
-const bool  USE_IMU_HEADING = true;   // Sensor Fusion: Gyro Z IMU + Quadrature Encoder
+// Hasil Kalibrasi Empiris Robot Mapping 2X Decoding (2805.00 ticks/m * 2 * PI * 0.0675 m)
+const float ENCODER_CPR     = 1189.64f;
 
-// ================= SPESIFIKASI MEKANIK & ORIENTASI IMU =================
+// ================= SPESIFIKASI MEKANIK & ORIENTASI IMU (ROBOT MAPPING) =================
 const float WHEEL_RADIUS    = 0.0675f; // Meter (Diameter 13.5 cm)
-const float TRACK_WIDTH     = 0.2370f; // Meter (Lebar antar pusat ban 23.7 cm)
-const float WHEEL_BASE      = TRACK_WIDTH; // Alias kompatibilitas
+const float TRACK_WIDTH     = 0.2350f; // Meter (Hasil kalibrasi efektif vs IMU)
+const float WHEEL_BASE      = TRACK_WIDTH;
+const float DIST_PER_PULSE  = (2.0f * PI * WHEEL_RADIUS) / ENCODER_CPR;
 const int   MOTOR_MIN_PWM   = 38;      // Kompensasi deadzone gearbox 1/51
 const float MOTOR_LAG_TAU   = 0.08f;   // Waktu respons inersia motor
 
 // Orientasi Fisik M5Stack Core Grey:
-// X- = Maju (F), X+ = Mundur, Y+ = Kanan, Y- = Kiri, Z+ = Atas, Z- = Bawah
-const float ACCEL_X_SIGN    = -1.0f;
-const float GYRO_Z_SIGN     = -1.0f;   // Putar kiri (CCW) = +headingDeg
+// X+ = Maju (F), X- = Mundur, Y+ = Kanan, Y- = Kiri, Z+ = Atas, Z- = Bawah
+const float ACCEL_X_SIGN    = +1.0f;
+const float GYRO_Z_SIGN     = -1.0f;   // Putar kiri (CCW) = +headingDeg (Negative Feedback PID)
 
 // ================= MAC ADDRESS M5STICKC PLUS =================
 uint8_t stickAddress[] = {0x50, 0x02, 0x91, 0x92, 0x3A, 0x78};
@@ -98,15 +98,16 @@ typedef struct __attribute__((packed)) {
 } struct_telemetry;
 struct_telemetry telemetryData;
 
-// ================= VARIABEL ODOMETRI (ENCODER + IMU) =================
+// ================= VARIABEL ENKODER & ODOMETRI (ALGORITMA ROBOT UTAMA) =================
+volatile long pulseL = 0;
+volatile long pulseR = 0;
+long prevPulseL = 0;
+long prevPulseR = 0;
+
 float odoX = 0.0f, odoY = 0.0f, odoTheta = 0.0f;
 float estVx = 0.0f, estVth = 0.0f;
-float linearScale = 1.00f;   // Faktor kalibrasi fine-tuning jarak 1 meter
+float linearScale = 1.00f;   // Faktor fine-tuning tambahan jarak linear
 portMUX_TYPE stateMux = portMUX_INITIALIZER_UNLOCKED;
-
-// Variabel Tick Interrupt Encoder (volatile)
-extern volatile long tick_count_left;
-extern volatile long tick_count_right;
 
 // ================= VARIABEL IMU & HEADING =================
 float accX = 0, accY = 0, accZ = 0;
@@ -136,8 +137,8 @@ float normalSpeedPct = 0.65f;  // 65% kecepatan saat mode normal (~0.45 m/s)
 float maxAngularVel  = 2.20f;  // rad/s
 float outputPWM_A = 0.0f, outputPWM_B = 0.0f;
 
-// Heading Lock PID
-float Kp_yaw = 1.85f, Ki_yaw = 0.06f, Kd_yaw = 0.16f;
+// Heading Lock PID (Parameter Stabil Trial Mapping)
+float Kp_yaw = 1.60f, Ki_yaw = 0.02f, Kd_yaw = 0.14f;
 float yawErrSum = 0.0f, lastYawErr = 0.0f, yawPidOut = 0.0f;
 float prevRateZ = 0.0f;
 bool  yawLockedSettled = true;
@@ -207,7 +208,6 @@ float normalizeAngleRad(float a);
 float normalizeAngleDeg(float a);
 void calibrateGyroZ();
 void resetPoseAndOdometry();
-
 void initOdometry();
 
 void setupESPNow();

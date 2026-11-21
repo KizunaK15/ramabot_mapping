@@ -1,36 +1,27 @@
 #include "config.h"
 
-// Definition Interrupt Counters
-volatile long tick_count_left = 0;
-volatile long tick_count_right = 0;
-
-// ================= INTERRUPT SERVICE ROUTINES (1X DECODING) =================
+// ================= INTERRUPT ENKODER (2X QUADRATURE DECODING ROBOT MAPPING) =================
 void IRAM_ATTR isr_encoder_left() {
-  if (digitalRead(ENCODER_L_B) == HIGH) {
-    tick_count_left++;
-  } else {
-    tick_count_left--;
-  }
+  (digitalRead(ENCODER_L_A) == digitalRead(ENCODER_L_B)) ? pulseL++ : pulseL--;
 }
 
 void IRAM_ATTR isr_encoder_right() {
-  if (digitalRead(ENCODER_R_B) == HIGH) {
-    tick_count_right--;
-  } else {
-    tick_count_right++;
-  }
+  // Tanda disesuaikan hasil kalibrasi agar gerak maju bernilai positif (+)
+  (digitalRead(ENCODER_R_A) == digitalRead(ENCODER_R_B)) ? pulseR-- : pulseR++;
 }
 
 void initOdometry() {
-  pinMode(ENCODER_L_A, INPUT_PULLUP);
-  pinMode(ENCODER_L_B, INPUT); // GPIO 35 Input-Only
-  pinMode(ENCODER_R_A, INPUT_PULLUP);
-  pinMode(ENCODER_R_B, INPUT); // GPIO 36 Input-Only
+  // Jalur optocoupler ENCA & ENCB sudah dilengkapi pull-up eksternal 4K7 di PCB
+  pinMode(ENCODER_L_A, INPUT);
+  pinMode(ENCODER_L_B, INPUT);
+  pinMode(ENCODER_R_A, INPUT);
+  pinMode(ENCODER_R_B, INPUT);
 
-  attachInterrupt(digitalPinToInterrupt(ENCODER_L_A), isr_encoder_left, RISING);
-  attachInterrupt(digitalPinToInterrupt(ENCODER_R_A), isr_encoder_right, RISING);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_L_A), isr_encoder_left, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_R_A), isr_encoder_right, CHANGE);
 }
 
+// ================= NORMALISASI SUDUT =================
 float normalizeAngleRad(float a) {
   while (a >  PI) a -= 2.0f * PI;
   while (a < -PI) a += 2.0f * PI;
@@ -72,11 +63,9 @@ void calibrateGyroZ() {
   M5.Display.clear();
 }
 
-// ================= RESET POSE & ODOMETRI =================
+// ================= RESET POSE & ODOMETRI (ALGORITMA ROBOT UTAMA) =================
 void resetPoseAndOdometry() {
   portENTER_CRITICAL(&stateMux);
-  tick_count_left  = 0;
-  tick_count_right = 0;
   odoX          = 0.0f;
   odoY          = 0.0f;
   odoTheta      = 0.0f;
@@ -87,4 +76,11 @@ void resetPoseAndOdometry() {
   yawErrSum     = 0.0f;
   lastYawErr    = 0.0f;
   portEXIT_CRITICAL(&stateMux);
+
+  noInterrupts();
+  pulseL = 0;
+  pulseR = 0;
+  interrupts();
+  prevPulseL = 0;
+  prevPulseR = 0;
 }

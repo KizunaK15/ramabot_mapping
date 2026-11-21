@@ -9,7 +9,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RAMABOT MAPPING — Heading PID Graph Tuning, Logger & OTA</title>
+<title>RAMABOT MAPPING — Encoder + IMU Fusion, PID Tuning & OTA</title>
 <style>
   body{font-family:system-ui,sans-serif;background:#111827;color:#f3f4f6;margin:0;padding:16px}
   h2{margin:0 0 12px;color:#38bdf8;font-size:1.2rem}
@@ -32,7 +32,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 </style>
 </head>
 <body>
-<h2>RAMABOT MAPPING — Heading PID Graph Tuning, CSV Logger & OTA</h2>
+<h2>RAMABOT MAPPING — Encoder + IMU Fusion, PID Tuning & OTA</h2>
 
 <div class="toolbar">
   <button id="recBtn" class="btn-rec" onclick="toggleRec()">Mulai Rekam CSV</button>
@@ -49,8 +49,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <div class="card"><div class="lbl">Target / Actual Heading</div><div class="val" style="color:#38bdf8" id="hdg">0.0° / 0.0°</div></div>
   <div class="card"><div class="lbl">Yaw PID Output</div><div class="val" style="color:#facc15" id="yawOut">0.0</div></div>
   <div class="card"><div class="lbl">PWM (L / R)</div><div class="val" style="color:#4ade80" id="pwm">0 / 0</div></div>
-  <div class="card"><div class="lbl">Est. Vel (Vx)</div><div class="val" id="vx">0.00 m/s</div></div>
+  <div class="card"><div class="lbl">Encoder Vel (Vx)</div><div class="val" id="vx">0.00 m/s</div></div>
   <div class="card"><div class="lbl">Odometry (X, Y)</div><div class="val" id="odo">0.00, 0.00</div></div>
+  <div class="card"><div class="lbl">Ticks (L / R)</div><div class="val" style="color:#c084fc" id="ticks">0 / 0</div></div>
 </div>
 
 <canvas id="chart" width="900" height="260"></canvas>
@@ -77,7 +78,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
 <script>
 let recording = false, t0 = 0, otaBusy = false;
-let logs = [["time_ms","tgtHeading_deg","heading_deg","yawPid","pwmL","pwmR","estVx","odoX","odoY","odoTheta_deg"]];
+let logs = [["time_ms","tgtHeading_deg","heading_deg","yawPid","pwmL","pwmR","estVx","odoX","odoY","odoTheta_deg","ticksL","ticksR"]];
 let hist = {tgtHdg:[], hdg:[], yawOut:[]};
 const MAX_PTS = 180;
 
@@ -130,7 +131,7 @@ function downloadCSV(){
   const blob = new Blob([csv], {type:"text/csv"});
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "ramabot_mapping_pid_" + Date.now() + ".csv";
+  a.download = "ramabot_fusion_pid_" + Date.now() + ".csv";
   a.click();
 }
 
@@ -199,6 +200,7 @@ setInterval(async ()=>{
     document.getElementById('pwm').textContent = `${d.pwmL.toFixed(0)} / ${d.pwmR.toFixed(0)}`;
     document.getElementById('vx').textContent = `${d.vx.toFixed(2)} m/s`;
     document.getElementById('odo').textContent = `${d.x.toFixed(2)}, ${d.y.toFixed(2)}`;
+    document.getElementById('ticks').textContent = `${d.tL} / ${d.tR}`;
 
     hist.tgtHdg.push(d.tgtHdg); hist.hdg.push(d.hdg); hist.yawOut.push(d.yawOut);
     if(hist.tgtHdg.length > MAX_PTS){ hist.tgtHdg.shift(); hist.hdg.shift(); hist.yawOut.shift(); }
@@ -208,7 +210,7 @@ setInterval(async ()=>{
       const dt = Math.round(performance.now() - t0);
       logs.push([dt, d.tgtHdg.toFixed(2), d.hdg.toFixed(2), d.yawOut.toFixed(2),
                  d.pwmL.toFixed(1), d.pwmR.toFixed(1), d.vx.toFixed(3),
-                 d.x.toFixed(4), d.y.toFixed(4), d.th.toFixed(2)]);
+                 d.x.toFixed(4), d.y.toFixed(4), d.th.toFixed(2), d.tL, d.tR]);
       document.getElementById('cnt').textContent = logs.length - 1;
     }
   }catch(e){}
@@ -217,7 +219,6 @@ setInterval(async ()=>{
 function toggleLock(){
   fetch('/togglelock').then(r=>r.text()).then(s=>alert('Heading Lock: ' + s));
 }
-
 </script>
 </body>
 </html>
@@ -271,17 +272,22 @@ void setupWebServer() {
   });
 
   server.on("/data", HTTP_GET, []() {
+    noInterrupts();
+    long tL = pulseL;
+    long tR = pulseR;
+    interrupts();
+
     portENTER_CRITICAL(&stateMux);
     float pL = outputPWM_A, pR = outputPWM_B;
     float hdg = headingDeg, thdg = targetHeading, yOut = yawPidOut;
     float vx = estVx, x = odoX, y = odoY, th = odoTheta * RAD_TO_DEG;
     portEXIT_CRITICAL(&stateMux);
 
-    char json[260];
+    char json[300];
     snprintf(json, sizeof(json),
              "{\"pwmL\":%.1f,\"pwmR\":%.1f,\"hdg\":%.2f,\"tgtHdg\":%.2f,"
-             "\"yawOut\":%.2f,\"vx\":%.3f,\"x\":%.4f,\"y\":%.4f,\"th\":%.2f}",
-             pL, pR, hdg, thdg, yOut, vx, x, y, th);
+             "\"yawOut\":%.2f,\"vx\":%.3f,\"x\":%.4f,\"y\":%.4f,\"th\":%.2f,\"tL\":%ld,\"tR\":%ld}",
+             pL, pR, hdg, thdg, yOut, vx, x, y, th, tL, tR);
     server.send(200, "application/json", json);
   });
 
@@ -502,7 +508,7 @@ void renderLcdScreen() {
   }
   else if (screenMode == IMU_VIEW) {
     float rateZ = GYRO_Z_SIGN * (gyroZ - gyroZOffset);
-    const char* dirX = (accX < -0.15f) ? "X- F/MAJU" : ((accX > 0.15f) ? "X+ MUNDUR" : "NETRAL   ");
+    const char* dirX = (accX >  0.15f) ? "X+ F/MAJU" : ((accX < -0.15f) ? "X- MUNDUR" : "NETRAL   ");
     const char* dirY = (accY >  0.15f) ? "Y+ KANAN " : ((accY < -0.15f) ? "Y- KIRI  " : "NETRAL   ");
     const char* dirZ = (accZ >  0.50f) ? "Z+ ATAS  " : ((accZ < -0.50f) ? "Z- BAWAH " : "MIRING   ");
 
@@ -526,12 +532,18 @@ void renderLcdScreen() {
     M5.Display.setTextSize(2);
   }
   else if (screenMode == ODOMETRY_VIEW) {
+    noInterrupts();
+    long tL = pulseL;
+    long tR = pulseR;
+    interrupts();
+
     M5.Display.setTextColor(WHITE, BLACK);
-    M5.Display.println(" == IMU ODOMETRY ==");
+    M5.Display.println(" == FUSION ODOMETRY ==");
     M5.Display.printf("X : %+6.3f m   \n", telemetryData.odoX);
     M5.Display.printf("Y : %+6.3f m   \n", telemetryData.odoY);
     M5.Display.printf("Th: %+6.1f deg \n", telemetryData.odoTheta * RAD_TO_DEG);
-    M5.Display.println("\nBtnC: Reset Pose");
+    M5.Display.printf("Tk: %ld / %ld \n", tL, tR);
+    M5.Display.println("BtnC: Reset Pose");
   }
   else if (screenMode == WIFI_INFO) {
     M5.Display.setTextColor(WHITE, BLACK);
