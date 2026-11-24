@@ -1,0 +1,42 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 50
+    use_sim_time: true
+
+    diff_cont:
+      type: diff_drive_controller/DiffDriveController
+
+    joint_broad:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+diff_cont:
+  ros__parameters:
+    publish_rate: 50.0
+
+    base_frame_id: base_footprint
+    odom_frame_id: odom
+
+    left_wheel_names: ['Wheel1']
+    right_wheel_names: ['Wheel2']
+
+    # Disamakan dengan konstanta fisik pada config.h M5Stack Core Grey
+    wheel_separation: 0.2350
+    wheel_radius: 0.0675
+
+    use_stamped_vel: false
+    # TF odom -> base_footprint diambil alih oleh mcu_odometry_node (Encoder + IMU Fusion)
+    enable_odom_tf: false
+
+    linear.x.has_velocity_limits: true
+    linear.x.max_velocity: 0.695
+    linear.x.min_velocity: -0.695
+    linear.x.has_acceleration_limits: true
+    linear.x.max_acceleration: 1.0
+    linear.x.min_acceleration: -1.0
+
+    angular.z.has_velocity_limits: true
+    angular.z.max_velocity: 2.20
+    angular.z.min_velocity: -2.20
+    angular.z.has_acceleration_limits: true
+    angular.z.max_acceleration: 2.0
+    angular.z.min_acceleration: -2.0

@@ -1,0 +1,203 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <link name="base_footprint"/>
+
+  <joint name="base_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Sasis Utama (Massa realistis 2.5 kg agar traksi roda stabil) -->
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0 0 0.09" rpy="0 0 0" />
+      <mass value="2.5" />
+      <inertia ixx="0.025" ixy="0" ixz="0" iyy="0.025" iyz="0" izz="0.04" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry><mesh filename="package://mapping_bot/meshes/base_link.STL" /></geometry>
+      <material name="chassis_grey"><color rgba="0.89 0.89 0.89 1" /></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.12" rpy="0 0 0" />
+      <geometry><cylinder radius="0.18" length="0.14" /></geometry>
+    </collision>
+  </link>
+
+  <!-- Bracket As Roda -->
+  <link name="link0">
+    <inertial>
+      <origin xyz="0 0 0.135" rpy="0 0 0" />
+      <mass value="0.05" />
+      <inertia ixx="0.0002" ixy="0" ixz="0" iyy="0.0002" iyz="0" izz="0.00001" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry><mesh filename="package://mapping_bot/meshes/link0.STL" /></geometry>
+      <material name="bracket_grey"><color rgba="0.89 0.89 0.89 1" /></material>
+    </visual>
+  </link>
+
+  <joint name="wheel_link" type="fixed">
+    <origin xyz="0.000137 0.135272 0.067012" rpy="1.5707963267949 0 0" />
+    <parent link="base_link" />
+    <child link="link0" />
+  </joint>
+
+  <!-- Roda Kiri (Wheel1) -->
+  <link name="link1">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.25" />
+      <inertia ixx="0.0003" ixy="0" ixz="0" iyy="0.00056" iyz="0" izz="0.0003" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry><mesh filename="package://mapping_bot/meshes/link1.STL" /></geometry>
+      <material name="wheel_dark"><color rgba="0.3 0.3 0.3 1" /></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.5707963267949 0 0" />
+      <geometry><cylinder radius="0.067012" length="0.025" /></geometry>
+    </collision>
+  </link>
+
+  <joint name="Wheel1" type="continuous">
+    <origin xyz="0 0 0" rpy="-1.5707963267949 0 0" />
+    <parent link="link0" />
+    <child link="link1" />
+    <axis xyz="0 1 0" />
+    <dynamics damping="0.2" friction="0.1"/>
+  </joint>
+
+  <!-- Roda Kanan (Wheel2) -->
+  <link name="link2">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.25" />
+      <inertia ixx="0.0003" ixy="0" ixz="0" iyy="0.00056" iyz="0" izz="0.0003" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry><mesh filename="package://mapping_bot/meshes/link2.STL" /></geometry>
+      <material name="wheel_dark"><color rgba="0.3 0.3 0.3 1" /></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.5707963267949 0 0" />
+      <geometry><cylinder radius="0.067012" length="0.025" /></geometry>
+    </collision>
+  </link>
+
+  <joint name="Wheel2" type="continuous">
+    <origin xyz="0 0 0.261184" rpy="-1.5707963267949 0 0" />
+    <parent link="link0" />
+    <child link="link2" />
+    <axis xyz="0 1 0" />
+    <dynamics damping="0.2" friction="0.1"/>
+  </joint>
+
+  <!-- Sensor RPLidar A2M8 -->
+  <link name="laser_frame">
+    <inertial>
+      <origin xyz="0 0 0.008" rpy="0 0 0" />
+      <mass value="0.17" />
+      <inertia ixx="0.00008" ixy="0" ixz="0" iyy="0.00008" iyz="0" izz="0.00011" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry><mesh filename="package://mapping_bot/meshes/link3.STL" /></geometry>
+      <material name="lidar_silver"><color rgba="0.75 0.75 0.75 0.8" /></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.01" rpy="0 0 0" />
+      <geometry><cylinder radius="0.038" length="0.04" /></geometry>
+    </collision>
+  </link>
+
+  <joint name="Lidar" type="fixed">
+    <origin xyz="0 0 0.2368" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="laser_frame" />
+  </joint>
+
+  <!-- Sensor IMU -->
+  <link name="imu_link"/>
+  <joint name="imu_joint" type="fixed">
+    <origin xyz="0 0 0.08" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="imu_link" />
+  </joint>
+
+  <!-- Caster Depan & Belakang (Tinggi kontak terkalibrasi rata dengan roda) -->
+  <link name="link4">
+    <inertial>
+      <origin xyz="0 0 0.015" rpy="0 0 0" />
+      <mass value="0.05" />
+      <inertia ixx="0.00001" ixy="0" ixz="0" iyy="0.00001" iyz="0" izz="0.00001" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry><mesh filename="package://mapping_bot/meshes/link4.STL" /></geometry>
+      <material name="caster_silver"><color rgba="0.71 0.71 0.71 1" /></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0155" rpy="0 0 0" />
+      <geometry><sphere radius="0.018" /></geometry>
+    </collision>
+  </link>
+
+  <joint name="Caster1" type="fixed">
+    <origin xyz="0.17337 -0.000086 0.0035" rpy="0 0 1.5705" />
+    <parent link="base_link" />
+    <child link="link4" />
+  </joint>
+
+  <link name="link5">
+    <inertial>
+      <origin xyz="0 0 0.015" rpy="0 0 0" />
+      <mass value="0.05" />
+      <inertia ixx="0.00001" ixy="0" ixz="0" iyy="0.00001" iyz="0" izz="0.00001" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry><mesh filename="package://mapping_bot/meshes/link5.STL" /></geometry>
+      <material name="caster_silver"><color rgba="0.71 0.71 0.71 1" /></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0155" rpy="0 0 0" />
+      <geometry><sphere radius="0.018" /></geometry>
+    </collision>
+  </link>
+
+  <joint name="Caster2" type="fixed">
+    <origin xyz="-0.14238 -0.000082 0.0035" rpy="0 0 1.5708" />
+    <parent link="base_link" />
+    <child link="link5" />
+  </joint>
+
+  <!-- Parameter Gesekan & Kekakuan Kontak Gazebo -->
+  <gazebo reference="link1">
+    <mu1>1.5</mu1>
+    <mu2>1.5</mu2>
+    <kp>1000000.0</kp>
+    <kd>100.0</kd>
+  </gazebo>
+  <gazebo reference="link2">
+    <mu1>1.5</mu1>
+    <mu2>1.5</mu2>
+    <kp>1000000.0</kp>
+    <kd>100.0</kd>
+  </gazebo>
+  <gazebo reference="link4">
+    <mu1>0.0</mu1>
+    <mu2>0.0</mu2>
+  </gazebo>
+  <gazebo reference="link5">
+    <mu1>0.0</mu1>
+    <mu2>0.0</mu2>
+  </gazebo>
+
+</robot>
