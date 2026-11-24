@@ -1,0 +1,80 @@
+import os
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch_ros.actions import Node
+
+
+def generate_launch_description():
+    pkg_dir = get_package_share_directory('ramabot_mapping')
+    sllidar_pkg = get_package_share_directory('sllidar_ros2')
+    slam_pkg = get_package_share_directory('slam_toolbox')
+
+    bot_params_file = os.path.join(pkg_dir, 'config', 'mapping_bot.yaml')
+    slam_params_file = os.path.join(pkg_dir, 'config', 'slam_toolbox_mapping.yaml')
+
+    # 1. Bridge Serial M5Stack Core Grey (/dev/m5stack)
+    m5_bridge = Node(
+        package='ramabot_mapping',
+        executable='mapping_odom_bridge',
+        name='mapping_odom_bridge',
+        output='screen',
+        parameters=[bot_params_file]
+    )
+
+    # 2. Static TF: base_footprint -> base_link -> laser_frame
+    tf_base_link = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='tf_base_footprint_to_base_link',
+        arguments=[
+            '--x', '0.0', '--y', '0.0', '--z', '0.067',
+            '--yaw', '0.0', '--pitch', '0.0', '--roll', '0.0',
+            '--frame-id', 'base_footprint', '--child-frame-id', 'base_link'
+        ]
+    )
+
+    tf_laser = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='tf_base_link_to_laser',
+        arguments=[
+            '--x', '0.05', '--y', '0.0', '--z', '0.12',
+            '--yaw', '3.14159', '--pitch', '0.0', '--roll', '0.0',
+            '--frame-id', 'base_link', '--child-frame-id', 'laser_frame'
+        ]
+    )
+
+    # 3. Driver RPLidar A2M8 via sllidar_a2m8_launch.py (/dev/rplidar)
+    rplidar_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(sllidar_pkg, 'launch', 'sllidar_a2m8_launch.py')
+        ),
+        launch_arguments={
+            'serial_port': '/dev/rplidar',
+            'serial_baudrate': '115200',
+            'frame_id': 'laser_frame',
+            'inverted': 'false',
+            'angle_compensate': 'true',
+        }.items()
+    )
+
+    # 4. SLAM Toolbox (Online Async Mapping)
+    slam_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(slam_pkg, 'launch', 'online_async_launch.py')
+        ),
+        launch_arguments={
+            'use_sim_time': 'false',
+            'slam_params_file': slam_params_file,
+        }.items()
+    )
+
+    return LaunchDescription([
+        m5_bridge,
+        tf_base_link,
+        tf_laser,
+        rplidar_launch,
+        slam_launch,
+    ])
