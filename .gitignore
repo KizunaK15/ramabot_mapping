@@ -1,9 +1,18 @@
-__pycache__/
-*.py[cod]
-*.egg-info/
+
+*.bin
 build/
+# Build & Log ROS 2
+.DS_Store
+*.egg-info/
+*.elf
+# Files Temporer
+firmware/**/build/
 install/
 log/
-*.bin
-*.elf
+# Output Firmware/Arduino
+*.pyc
+__pycache__/
+*.py[cod]
+*.swp
+venv/
 .vscode/
